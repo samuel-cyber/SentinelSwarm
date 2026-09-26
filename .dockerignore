@@ -1,0 +1,49 @@
+# .dockerignore — keeps secrets and junk out of the image.
+#
+# This file is INDEPENDENT of .gitignore: Docker does not read .gitignore, so
+# anything not listed here gets copied by `COPY . .`.  Without this file the
+# build bakes orchestrator/.env — which holds a real API key — straight into an
+# image layer, where it persists even if a later layer deletes the file.
+
+# --- secrets: never ship these into an image ------------------------------
+.env
+**/.env
+*.env
+!.env.example
+
+# --- answer key: must never be public -------------------------------------
+PLANTED_BUGS.md
+**/PLANTED_BUGS.md
+
+# --- local virtualenvs ----------------------------------------------------
+# The local .venv/ is a 35MB Windows venv — useless inside a Linux image.
+.venv/
+venv/
+env/
+ENV/
+
+# --- Python caches / build artifacts --------------------------------------
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+**/.pytest_cache/
+.coverage
+htmlcov/
+
+# --- Saboteur output: generated per run, not source ------------------------
+test_generated.py
+**/test_generated.py
+
+# --- VCS / editor / OS -----------------------------------------------------
+.git/
+.gitignore
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# --- Docker's own files ----------------------------------------------------
+Dockerfile
+.dockerignore
