@@ -26,22 +26,24 @@ import sys
 
 def find_bob_cmd() -> str:
     """
-    Return the full path to the bob executable.
+    Return the full path to the ``bob`` executable via ``shutil.which``.
 
-    Tries candidates in order so that the .cmd wrapper (Windows npm shim) is
-    preferred — it is the only form Python's subprocess can invoke directly
-    in list-form without shell=True.
+    On Linux/macOS (including Render), npm installs Bob Shell as a plain
+    ``bob`` binary on PATH — no wrapper extension needed.
 
-    Raises RuntimeError if bob is not on PATH at all.
+    On Windows (local dev), ``shutil.which`` still resolves correctly
+    because it honours PATHEXT and will find ``bob.cmd`` when searching for
+    ``bob``.
+
+    Raises RuntimeError if ``bob`` is not on PATH at all.
     """
-    for candidate in ("bob.cmd", "bob.ps1", "bob"):
-        path = shutil.which(candidate)
-        if path:
-            return path
+    path = shutil.which("bob")
+    if path:
+        return path
     raise RuntimeError(
         "Bob Shell ('bob') not found on PATH.\n"
-        "Install it with:\n"
-        "  powershell -ep Bypass "
+        "Linux/macOS: curl -fsSL https://bob.ibm.com/download/bobshell.sh | bash\n"
+        "Windows:     powershell -ep Bypass "
         "'irm -Uri https://bob.ibm.com/download/bobshell.ps1 | iex'"
     )
 
