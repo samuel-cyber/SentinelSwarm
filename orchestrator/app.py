@@ -22,6 +22,7 @@ credits — never enable them on a public deployment):
 import functools
 import os
 import shutil
+import tempfile
 from flask import Flask, jsonify, render_template, request
 from dotenv import load_dotenv
 
@@ -34,6 +35,72 @@ from sandbox_runner import (
     save_snippet_to_tempdir,
     validate_snippet,
 )
+
+# ---------------------------------------------------------------------------
+# Runtime tput stub
+#
+# Bob Shell's install chain shells out to `tput` for terminal colors, and
+# Render's containers ship no terminfo tools — `tput` is simply not there. At
+# build time that aborts the build (see render-build.sh); at runtime it would
+# abort a live /run-swarm in front of judges, which is worse.  The build
+# container and the runtime container are separate environments, so the stub
+# created at build time does not exist here and has to be recreated.
+#
+# Prepending to os.environ["PATH"] reaches both places that matter:
+#   * shutil.which() inside bob_client.find_bob_cmd(), and
+#   * the subprocess env, which call_bob builds via os.environ.copy().
+#
+# This runs at import — before Flask serves a request and before any Bob call.
+# POSIX only: on Windows (local dev) there is no tput to shadow, and the stub
+# is a shell script, so we skip rather than write an unusable file.
+# ---------------------------------------------------------------------------
+
+_TPUT_STUB_SOURCE = """#!/bin/sh
+# No-op tput. cols/lines are handled because their OUTPUT is used as a value;
+# returning empty there can break arithmetic downstream. Every other
+# subcommand (setaf, sgr0, bold, ...) is a color call whose output is
+# discarded, so printing nothing and exiting 0 is the correct behavior.
+case "$1" in
+  cols)  echo 80 ;;
+  lines) echo 24 ;;
+  *)     exit 0 ;;
+esac
+"""
+
+
+def _install_tput_stub() -> str | None:
+    """
+    Put a no-op ``tput`` at the front of PATH for this process and every
+    subprocess it spawns.  Returns the stub directory, or None if nothing
+    was installed.
+
+    Best-effort by design: a missing stub must never be the reason the app
+    fails to start, so filesystem errors are swallowed rather than raised.
+    """
+    if os.name != "posix":
+        return None
+
+    stub_dir  = os.path.join(tempfile.gettempdir(), "sentinel-stubbin")
+    stub_path = os.path.join(stub_dir, "tput")
+
+    try:
+        os.makedirs(stub_dir, exist_ok=True)
+        with open(stub_path, "w", encoding="utf-8") as fh:
+            fh.write(_TPUT_STUB_SOURCE)
+        os.chmod(stub_path, 0o755)
+    except OSError:
+        return None
+
+    # Guard against prepending twice if this module is imported more than once
+    # in the same process (and against a re-import under gunicorn's reloader).
+    current = os.environ.get("PATH", "")
+    if stub_dir not in current.split(os.pathsep):
+        os.environ["PATH"] = stub_dir + os.pathsep + current
+
+    return stub_dir
+
+
+_TPUT_STUB_DIR = _install_tput_stub()
 
 load_dotenv()
 

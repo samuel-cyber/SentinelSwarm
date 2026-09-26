@@ -4,6 +4,41 @@
 # Render's auto-detect to run it if it is present in the repo root.
 set -euo pipefail
 
+# --- tput stub ---------------------------------------------------------------
+# Render's build container has no `tput`. Something in the Bob install chain
+# calls it for terminal colors and fails with "tput: command not found" at
+# /home/render/colors.sh, which under `set -e` aborts the build.
+#
+# Shadow it with a no-op at the front of PATH so any call succeeds silently.
+# This does not modify Bob's own script — it only changes what `tput` resolves
+# to for the rest of this build. Note that bobshell_install.sh itself never
+# calls tput (its colors are hardcoded ANSI escapes), so this covers a call
+# made by a hooked or sourced script elsewhere in the install chain.
+#
+# Deliberately the FIRST thing after `set -euo pipefail`, above the pip
+# install: the exact caller is not yet identified, so this covers every step
+# in the script no matter which one turns out to be the trigger.
+#
+# Unconditional on purpose: shadowing a *working* tput costs nothing but color
+# output, and it also covers the common case where tput exists but fails with
+# "No value for $TERM and no -T specified".
+mkdir -p /tmp/stubbin
+cat > /tmp/stubbin/tput <<'STUB'
+#!/bin/sh
+# No-op tput. `cols`/`lines` are handled because their OUTPUT is used as a
+# value -- returning empty there can break arithmetic downstream (e.g. a
+# divider width computed as $(( $(tput cols) - 5 ))). Every other subcommand
+# (setaf, sgr0, bold, ...) is a color call whose output is discarded, so
+# printing nothing and exiting 0 is the correct behavior.
+case "$1" in
+  cols)  echo 80 ;;
+  lines) echo 24 ;;
+  *)     exit 0 ;;
+esac
+STUB
+chmod +x /tmp/stubbin/tput
+export PATH="/tmp/stubbin:$PATH"
+
 echo "==> Installing Python dependencies"
 pip install -r orchestrator/requirements.txt
 
