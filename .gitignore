@@ -21,5 +21,8 @@ build/
 htmlcov/
 .coverage
 
+# Saboteur's generated test -- an output of a run, not source
+test_generated.py
+
 # macOS
 .DS_Store

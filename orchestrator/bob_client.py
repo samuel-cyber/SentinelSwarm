@@ -194,7 +194,8 @@ def run_pytest(test_path: str, cwd: str, timeout: int = 60) -> dict:
     -----------
     passed           : bool  — True only when all tests pass (exit code 0)
     collection_error : bool  — True when pytest couldn't collect/import the
-                               test file (env problem, not a real bug)
+                               test file, or the run timed out (env problem,
+                               not a real bug)
     output           : str   — combined stdout + stderr from pytest
 
     Classification rule
@@ -202,15 +203,25 @@ def run_pytest(test_path: str, cwd: str, timeout: int = 60) -> dict:
     A genuine assertion failure always prints a ``FAILED`` line.  Any non-zero
     exit that lacks ``FAILED`` in the output is an environment/collection error.
     """
-    result = subprocess.run(
-        [sys.executable, "-m", "pytest", test_path, "-v", "--tb=short",
-         "--no-header"],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        cwd=cwd,
-        timeout=timeout,
-    )
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "pytest", test_path, "-v", "--tb=short",
+             "--no-header"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            cwd=cwd,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        # A hung test run is an environment problem, not a proven bug.  Report
+        # it under the same rule as below (non-zero, no FAILED line) so callers
+        # take their "not a real failure" path instead of seeing an exception.
+        return {
+            "passed": False,
+            "collection_error": True,
+            "output": f"pytest timed out after {timeout}s and was killed.",
+        }
 
     output = (result.stdout + result.stderr).strip()
     has_real_failure = "FAILED" in output

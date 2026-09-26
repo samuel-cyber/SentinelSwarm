@@ -8,14 +8,18 @@ Run locally:
 
 Routes:
     GET  /                         — judge-facing frontend
-    GET  /run-swarm?scenario=<id>  — full chain: Scout→Saboteur→Medic→Scribe
+    POST /run-swarm?scenario=<id>  — full chain: Scout→Saboteur→Medic→Scribe
     POST /reset-demo?scenario=<id> — restore scenario app.py from .bak
-    POST /run-snippet               — validate+run pipeline on user-pasted code
+    POST /run-snippet              — validate+run pipeline on user-pasted code
+
+Dev-only routes (require SENTINEL_DEV_ROUTES=1, unauthenticated, spend API
+credits — never enable them on a public deployment):
     GET  /test-scout               — smoke-test Scout only
     GET  /test-saboteur            — Scout→Saboteur→pytest
     GET  /test-medic               — Scout→Saboteur→Medic
 """
 
+import functools
 import os
 import shutil
 from flask import Flask, jsonify, render_template, request
@@ -91,6 +95,58 @@ def _reset_scenario(scenario_path: str) -> bool:
     return restored
 
 
+def _json_errors(fn):
+    """
+    Turn an unexpected exception inside a pipeline route into a JSON body.
+
+    Every route here is consumed by the frontend with ``await res.json()``.
+    Without this, an uncaught error (Bob CLI missing, no API key, pytest
+    timeout) makes Flask return an HTML traceback page, which the browser
+    reports as a confusing JSON parse error instead of the real cause.
+    """
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except SnippetValidationError as exc:
+            return jsonify({
+                "status": "error",
+                "stage":  "validation",
+                "detail": str(exc),
+            }), 400
+        except Exception as exc:                      # noqa: BLE001 — last resort
+            app.logger.exception("Swarm pipeline failed")
+            return jsonify({
+                "status": "error",
+                "stage":  "pipeline",
+                "detail": f"{type(exc).__name__}: {exc}",
+            }), 500
+    return wrapper
+
+
+def _build_trail(scout_summary: str, sab: dict, med: dict | None = None) -> dict:
+    """
+    Assemble the payload the frontend uses to render all four panels.
+
+    Every verdict that has panel-worthy output includes this under ``trail``,
+    so the browser never has to guess which envelope shape it received.
+    Pass *med* only once the Medic step has actually run.
+    """
+    trail = {
+        "scout_summary":         scout_summary,
+        "test_code":             sab["test_code"],
+        "test_path":             sab["test_path"],
+        "initial_pytest_output": sab["pytest_output"],
+    }
+    if med is not None:
+        trail.update({
+            "fixed_source":        med["fixed_source"],
+            "rerun_pytest_output": med["rerun_output"],
+            "backup_path":         med["backup_path"],
+        })
+    return trail
+
+
 # ---------------------------------------------------------------------------
 # / — serve the frontend
 # ---------------------------------------------------------------------------
@@ -117,10 +173,15 @@ def reset_demo():
 
 
 # ---------------------------------------------------------------------------
-# /run-swarm  (GET ?scenario=<id>)
+# /run-swarm  (POST ?scenario=<id>)
+#
+# POST, not GET: this resets the scenario on disk and spends four real Bob
+# API calls, so it must not be reachable by a link prefetch, a crawler, or a
+# browser address-bar autocomplete against the public demo URL.
 # ---------------------------------------------------------------------------
 
-@app.route("/run-swarm")
+@app.route("/run-swarm", methods=["POST"])
+@_json_errors
 def run_swarm():
     sid, meta    = _resolve_scenario(request.args.get("scenario"))
     scenario_path = meta["path"]
@@ -151,6 +212,7 @@ def run_swarm():
             "scout_summary": scout_summary,
             "test_code":     sab["test_code"],
             "pytest_output": sab["pytest_output"],
+            "trail":         _build_trail(scout_summary, sab),
         })
 
     # ── Step 3: Medic ─────────────────────────────────────────────────────────
@@ -166,6 +228,7 @@ def run_swarm():
             "initial_pytest_output": sab["pytest_output"],
             "fixed_source":         med["fixed_source"],
             "rerun_pytest_output":  med["rerun_output"],
+            "trail":                _build_trail(scout_summary, sab, med),
         })
 
     # ── Step 4: Scribe ────────────────────────────────────────────────────────
@@ -188,15 +251,7 @@ def run_swarm():
         "scribe_error":   scr.get("error"),
 
         # Full trail for frontend panels
-        "trail": {
-            "scout_summary":         scout_summary,
-            "test_code":             sab["test_code"],
-            "test_path":             sab["test_path"],
-            "initial_pytest_output": sab["pytest_output"],
-            "fixed_source":          med["fixed_source"],
-            "rerun_pytest_output":   med["rerun_output"],
-            "backup_path":           med["backup_path"],
-        },
+        "trail": _build_trail(scout_summary, sab, med),
     })
 
 
@@ -204,22 +259,22 @@ def run_swarm():
 # /run-snippet  (POST, JSON body: {"code": "<python source>"})
 #
 # Security flow:
-#   1. Validate snippet via Judge0 CE (remote sandbox — never exec'd locally)
+#   1. Validate snippet against the local safety filter in sandbox_runner
+#      (static AST blocklist, then a resource-capped probe subprocess)
 #   2. On validation failure → return 400 with the error, no Bob calls spent
 #   3. On success → save to tmp dir, run full Scout→Saboteur→Medic→Scribe
 # ---------------------------------------------------------------------------
 
 @app.route("/run-snippet", methods=["POST"])
+@_json_errors
 def run_snippet():
-    import shutil as _shutil  # already imported at top, but explicit here
-
     data = request.get_json(force=True, silent=True) or {}
     code = data.get("code", "")
 
     if not code or not code.strip():
         return jsonify({"status": "error", "detail": "No code provided."}), 400
 
-    # ── Step 0: Sandbox validation via Judge0 (remote, never local exec) ──
+    # ── Step 0: Sandbox validation (static AST blocklist + capped probe) ──
     try:
         validate_snippet(code)
     except SnippetValidationError as exc:
@@ -257,6 +312,7 @@ def run_snippet():
                 "scout_summary": scout_summary,
                 "test_code":     sab["test_code"],
                 "pytest_output": sab["pytest_output"],
+                "trail":         _build_trail(scout_summary, sab),
             })
 
         # Step 3: Medic
@@ -271,6 +327,7 @@ def run_snippet():
                 "initial_pytest_output": sab["pytest_output"],
                 "fixed_source":          med["fixed_source"],
                 "rerun_pytest_output":   med["rerun_output"],
+                "trail":                 _build_trail(scout_summary, sab, med),
             })
 
         # Step 4: Scribe
@@ -288,62 +345,67 @@ def run_snippet():
             "case_file":      scr.get("case_file") if scr["success"] else None,
             "scribe_success": scr["success"],
             "scribe_error":   scr.get("error"),
-            "trail": {
-                "scout_summary":         scout_summary,
-                "test_code":             sab["test_code"],
-                "test_path":             sab["test_path"],
-                "initial_pytest_output": sab["pytest_output"],
-                "fixed_source":          med["fixed_source"],
-                "rerun_pytest_output":   med["rerun_output"],
-                "backup_path":           med["backup_path"],
-            },
+            "trail":          _build_trail(scout_summary, sab, med),
         })
 
     finally:
         # Clean up the temp dir whether the run succeeded or not
-        _shutil.rmtree(snippet_path, ignore_errors=True)
+        shutil.rmtree(snippet_path, ignore_errors=True)
 
 
 # ---------------------------------------------------------------------------
-# Dev/smoke-test routes
+# Dev/smoke-test routes — DISABLED unless SENTINEL_DEV_ROUTES is set
+#
+# Each of these spends real Bob API calls and none of them is authenticated,
+# so leaving them live on a public demo URL lets anyone who guesses the path
+# drain the API quota.  Enable them locally only:
+#
+#     SENTINEL_DEV_ROUTES=1 flask --app app run --port 5001
 # ---------------------------------------------------------------------------
 
-def _get_dev_scenario():
-    return _resolve_scenario(request.args.get("scenario"))[1]["path"]
+_DEV_ROUTES_ENABLED = (
+    os.environ.get("SENTINEL_DEV_ROUTES", "").strip().lower()
+    in {"1", "true", "yes", "on"}
+)
 
+if _DEV_ROUTES_ENABLED:
 
-@app.route("/test-scout")
-def test_scout():
-    path = _get_dev_scenario()
-    return jsonify({"status": "ok", "scout_summary": run_scout(path)})
+    def _get_dev_scenario():
+        return _resolve_scenario(request.args.get("scenario"))[1]["path"]
 
+    @app.route("/test-scout")
+    @_json_errors
+    def test_scout():
+        path = _get_dev_scenario()
+        return jsonify({"status": "ok", "scout_summary": run_scout(path)})
 
-@app.route("/test-saboteur")
-def test_saboteur():
-    path    = _get_dev_scenario()
-    summary = run_scout(path)
-    result  = run_saboteur(summary, path)
-    verdict = ("error" if result["collection_error"]
-               else "no_bug_found" if result["passed"]
-               else "bug_found")
-    return jsonify({"status": "ok", "verdict": verdict, **result})
+    @app.route("/test-saboteur")
+    @_json_errors
+    def test_saboteur():
+        path    = _get_dev_scenario()
+        summary = run_scout(path)
+        result  = run_saboteur(summary, path)
+        verdict = ("error" if result["collection_error"]
+                   else "no_bug_found" if result["passed"]
+                   else "bug_found")
+        return jsonify({"status": "ok", "verdict": verdict, **result})
 
-
-@app.route("/test-medic")
-def test_medic():
-    path    = _get_dev_scenario()
-    summary = run_scout(path)
-    sab     = run_saboteur(summary, path)
-    if sab["collection_error"]:
-        return jsonify({"status": "error", **sab}), 500
-    if sab["passed"]:
-        return jsonify({"status": "ok", "verdict": "no_bug_found", **sab})
-    med = run_medic(sab["test_code"], sab["pytest_output"], path)
-    return jsonify({
-        "status":  "ok",
-        "verdict": "fix_confirmed" if med["fix_confirmed"] else "fix_failed",
-        **sab, **med,
-    })
+    @app.route("/test-medic")
+    @_json_errors
+    def test_medic():
+        path    = _get_dev_scenario()
+        summary = run_scout(path)
+        sab     = run_saboteur(summary, path)
+        if sab["collection_error"]:
+            return jsonify({"status": "error", **sab}), 500
+        if sab["passed"]:
+            return jsonify({"status": "ok", "verdict": "no_bug_found", **sab})
+        med = run_medic(sab["test_code"], sab["pytest_output"], path)
+        return jsonify({
+            "status":  "ok",
+            "verdict": "fix_confirmed" if med["fix_confirmed"] else "fix_failed",
+            **sab, **med,
+        })
 
 
 if __name__ == "__main__":

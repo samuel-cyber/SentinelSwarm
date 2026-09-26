@@ -97,7 +97,7 @@ def run_scribe(
     initial_pytest_output  : pytest output from the failing run (red)
     fixed_source           : the corrected app.py content
     rerun_pytest_output    : pytest output from the confirmation run (green)
-    repo_path              : absolute path to sample_app/ (used as workspace)
+    repo_path              : absolute path to the scenario directory (workspace)
 
     Returns a dict with keys:
       success       : bool — True if Bob returned parseable, complete JSON
@@ -126,6 +126,16 @@ def run_scribe(
             "success": False,
             "raw_response": raw_response,
             "error": f"Bob returned invalid JSON: {exc}",
+        }
+
+    # json.loads happily returns a bare list/int/string.  The field checks
+    # below would raise TypeError on those, so reject the shape up front —
+    # this function's contract is that it never raises on bad Bob output.
+    if not isinstance(case_file, dict):
+        return {
+            "success": False,
+            "raw_response": raw_response,
+            "error": f"Expected a JSON object, got {type(case_file).__name__}",
         }
 
     missing = [f for f in REQUIRED_FIELDS if f not in case_file]

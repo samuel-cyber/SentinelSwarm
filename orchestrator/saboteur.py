@@ -7,9 +7,9 @@ Given the Scout's function summary and the actual source, asks Bob to:
      (empty input, None, boundary value, wrong type, etc.).
   3. Return ONLY the raw Python test code — no prose, no markdown fences.
 
-The returned code is written to sample_app/test_generated.py and then
-executed with pytest.  The caller receives the test code, the pass/fail
-result, and the full pytest output.
+The returned code is written to test_generated.py inside the scenario
+directory and then executed with pytest.  The caller receives the test
+code, the pass/fail result, and the full pytest output.
 """
 
 import os
@@ -61,7 +61,7 @@ _PROMPT = textwrap.dedent("""\
 def run_saboteur(scout_summary: str, repo_path: str) -> dict:
     """
     Ask Bob to write a pytest test targeting the most bug-prone function,
-    save it to sample_app/test_generated.py, run it, and return results.
+    save it to test_generated.py in that directory, run it, and return results.
 
     Returns a dict with keys:
       test_code   — the raw Python test code Bob produced

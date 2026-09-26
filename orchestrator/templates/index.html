@@ -126,13 +126,76 @@
       max-width: 300px;
       padding: 20px;
       opacity: 0.35;
-      transition: opacity 0.4s ease, border-color 0.4s ease;
+      position: relative;
+      overflow: hidden;          /* clips Scout's scan sweep to the panel */
+      transform: translateY(0);
+      /* idle → active → done all glide instead of snapping */
+      transition:
+        opacity      0.40s cubic-bezier(.4,0,.2,1),
+        border-color 0.40s cubic-bezier(.4,0,.2,1),
+        transform    0.35s cubic-bezier(.4,0,.2,1),
+        box-shadow   0.40s cubic-bezier(.4,0,.2,1);
       display: flex;
       flex-direction: column;
       gap: 10px;
     }
-    .panel.active  { opacity: 1; border-color: var(--accent); }
-    .panel.done    { opacity: 1; border-color: var(--border); }
+    .panel.active  {
+      opacity: 1;
+      border-color: var(--accent);
+      transform: translateY(-3px);
+      box-shadow: 0 8px 26px -10px rgba(56,139,253,0.85);
+    }
+    .panel.done    {
+      opacity: 1;
+      border-color: var(--border);
+      transform: translateY(0);
+      box-shadow: 0 0 0 rgba(56,139,253,0);
+    }
+    .panel.done.error-state { border-color: var(--red); }
+
+    /* Panel body content fades/slides in as each step reports back.
+       innerHTML replacement creates fresh child nodes, so the animation
+       re-fires on every update without any JS involvement. */
+    .panel-body > * {
+      animation: fadeSlideIn 0.30s cubic-bezier(.4,0,.2,1) both;
+    }
+    .panel-body > *:nth-child(1) { animation-delay: 0s; }
+    .panel-body > *:nth-child(2) { animation-delay: 0.06s; }
+    .panel-body > *:nth-child(3) { animation-delay: 0.12s; }
+
+    @keyframes fadeSlideIn {
+      0%   { opacity: 0; transform: translateY(8px); }
+      100% { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ── Scout: sweeping scan line + pulsing border while active ─────── */
+    #panel-scout.active {
+      animation: scoutGlow 1.9s ease-in-out infinite;
+    }
+    #panel-scout.active::after {
+      content: "";
+      position: absolute;
+      left: 0; right: 0;
+      height: 45%;
+      pointer-events: none;
+      background: linear-gradient(
+        to bottom,
+        rgba(56,139,253,0)    0%,
+        rgba(56,139,253,0.06) 55%,
+        rgba(56,139,253,0.22) 85%,
+        rgba(125,170,255,0.50) 100%);
+      animation: scoutSweep 1.9s cubic-bezier(.45,0,.55,1) infinite;
+    }
+    @keyframes scoutSweep {
+      0%   { top: -45%; opacity: 0; }
+      12%  {            opacity: 1; }
+      88%  {            opacity: 1; }
+      100% { top: 100%;  opacity: 0; }
+    }
+    @keyframes scoutGlow {
+      0%, 100% { border-color: rgba(56,139,253,0.55); }
+      50%      { border-color: rgba(56,139,253,1);    }
+    }
 
     .panel-header {
       display: flex;
@@ -208,6 +271,45 @@
     }
     .badge-red   { background: #2d1319; color: var(--red);   border: 1px solid var(--red); }
     .badge-green { background: #0d2116; color: var(--green); border: 1px solid var(--green); }
+
+    /* ── Saboteur: "BUG FOUND" badge — shake + red flash on appear ────── */
+    #panel-saboteur .badge-red {
+      animation: badgeShake 0.55s cubic-bezier(.36,.07,.19,.97) both;
+    }
+    @keyframes badgeShake {
+      0%   { transform: translateX(0)    scale(1);    opacity: 0;
+             background: #2d1319; box-shadow: 0 0 0 rgba(248,81,73,0); }
+      15%  { transform: translateX(-4px) scale(1.08); opacity: 1;
+             background: #4d1a22; box-shadow: 0 0 14px rgba(248,81,73,0.85); }
+      30%  { transform: translateX(4px)  scale(1.04);
+             background: #4d1a22; box-shadow: 0 0 10px rgba(248,81,73,0.55); }
+      45%  { transform: translateX(-3px) scale(1.02); }
+      60%  { transform: translateX(3px)  scale(1.01); }
+      75%  { transform: translateX(-1px) scale(1);    }
+      100% { transform: translateX(0)    scale(1);    opacity: 1;
+             background: #2d1319; box-shadow: 0 0 0 rgba(248,81,73,0); }
+    }
+
+    /* ── Medic: "FIX APPLIED" badge + checkmark pop in ────────────────── */
+    #panel-medic .badge-green {
+      animation: fixBadgeIn 0.40s cubic-bezier(.34,1.56,.64,1) both;
+    }
+    #panel-medic .badge-green::before {
+      content: "\2713";                       /* ✓ — added in CSS, no JS change */
+      display: inline-block;
+      margin-right: 5px;
+      font-weight: 900;
+      animation: checkPop 0.50s cubic-bezier(.34,1.56,.64,1) 0.10s both;
+    }
+    @keyframes fixBadgeIn {
+      0%   { transform: scale(0.70); opacity: 0; }
+      100% { transform: scale(1);    opacity: 1; }
+    }
+    @keyframes checkPop {
+      0%   { transform: scale(0)    rotate(-45deg); opacity: 0; }
+      60%  { transform: scale(1.35) rotate(6deg);   opacity: 1; }
+      100% { transform: scale(1)    rotate(0deg);   opacity: 1; }
+    }
 
     /* case-file card (Scribe panel) */
     .case-file {
@@ -289,6 +391,31 @@
       color: var(--green);
     }
     .proof-badge svg { width: 12px; height: 12px; }
+
+    /* ── Scribe: case-file card assembles itself (fade + slide) ───────── */
+    #panel-scribe .proof-row {
+      animation: fadeSlideIn 0.45s cubic-bezier(.4,0,.2,1) both;
+    }
+    #panel-scribe .proof-badge svg {
+      animation: checkPop 0.45s cubic-bezier(.34,1.56,.64,1) 0.35s both;
+    }
+    #panel-scribe .case-file {
+      animation: caseFileIn 0.50s cubic-bezier(.4,0,.2,1) 0.10s both;
+    }
+    @keyframes caseFileIn {
+      0%   { opacity: 0; transform: translateY(12px) scale(0.98); }
+      100% { opacity: 1; transform: translateY(0)    scale(1);    }
+    }
+    /* Fragility bar fills from the left once the card has landed.
+       scaleX (not width) so it works whatever the inline width % is. */
+    #panel-scribe .severity-fill {
+      transform-origin: left center;
+      animation: sevGrow 0.75s cubic-bezier(.4,0,.2,1) 0.40s both;
+    }
+    @keyframes sevGrow {
+      0%   { transform: scaleX(0); }
+      100% { transform: scaleX(1); }
+    }
 
     /* ── Mode tabs ───────────────────────────────────────────────────── */
     .mode-tabs {
@@ -436,6 +563,27 @@
     @media (max-width: 680px) {
       #panels { flex-direction: column; align-items: center; }
       .panel  { max-width: 100%; width: 100%; }
+    }
+
+    /* ── Reduced motion ──────────────────────────────────────────────────
+       Everything below is decorative, so it can all go. The status-bar
+       spinner is deliberately left spinning — it is the loading indicator,
+       not decoration. */
+    @media (prefers-reduced-motion: reduce) {
+      .panel,
+      .panel-body > *,
+      .badge,
+      .badge::before,
+      .proof-row,
+      .proof-badge svg,
+      .case-file,
+      .severity-fill,
+      .status-dot {
+        animation: none !important;
+        transition: none !important;
+      }
+      #panel-scout.active          { animation: none !important; }
+      #panel-scout.active::after   { display: none; }
     }
   </style>
 </head>
@@ -686,6 +834,38 @@ No Flask app wrapper needed — plain functions work fine."
         </div>`;
     }
 
+    // Medic could not confirm a fix. Scout and Saboteur genuinely succeeded,
+    // so they render normally; Medic and Scribe report the honest outcome
+    // instead of the previous behaviour, where a missing `trail` threw a
+    // TypeError and surfaced as a generic error banner.
+    function renderFixFailed(data) {
+      const trail = data.trail ?? {};
+
+      renderScout(trail);
+      panelDone('panel-scout');
+
+      renderSaboteur(trail);
+      panelDone('panel-saboteur');
+
+      $('body-medic').innerHTML = `
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+          <span class="badge badge-red">Fix Failed</span>
+          <span style="font-size:0.75rem;color:var(--muted);">test STILL RED ↓</span>
+        </div>
+        <div class="code-block" style="color:var(--red);">${escHtml(trail.rerun_pytest_output)}</div>
+        <p style="margin-top:8px;">Original code was restored automatically.</p>`;
+      panelDone('panel-medic', true);
+
+      $('body-scribe').innerHTML =
+        '<p style="color:var(--muted)">No case file — the fix was not confirmed, ' +
+        'so there is nothing to report.</p>';
+      panelDone('panel-scribe', true);
+
+      $('spinner').classList.remove('active');
+      setStatus('Medic could not confirm a fix. Original code restored.');
+      $('run-again-btn').classList.add('visible');
+    }
+
     // ── Staggered reveal (simulates live sequencing post-fetch) ───────
 
     function revealSequence(data) {
@@ -780,6 +960,10 @@ No Flask app wrapper needed — plain functions work fine."
         $('run-again-btn').classList.add('visible');
         return;
       }
+      if (data.verdict === 'fix_failed') {
+        renderFixFailed(data);
+        return;
+      }
       revealSequence(data);
     }
 
@@ -806,7 +990,11 @@ No Flask app wrapper needed — plain functions work fine."
       setStatus('Scout is mapping the codebase…');
 
       try {
-        const res  = await fetch(`/run-swarm?scenario=${encodeURIComponent(scenario)}`);
+        // POST: the route resets the scenario and spends four Bob calls, so it
+        // must not be triggerable by a crawler or link prefetch.
+        const res  = await fetch(`/run-swarm?scenario=${encodeURIComponent(scenario)}`, {
+          method: 'POST',
+        });
         const data = await res.json();
         data.ok_status = res.ok && data.status !== 'error';
         handleSwarmResponse(data, null);

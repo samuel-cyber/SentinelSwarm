@@ -23,6 +23,11 @@ two layers of protection:
     • Network isolation (we rely on the import blocklist for obvious attempts)
     • Full OS-level sandboxing (no seccomp, no namespaces, no containers)
     • Protection against all possible escape techniques
+    • Blocklist completeness — an AST blocklist is a heuristic, not a proof.
+      The lists below are deliberately broad (they also reject getattr/vars/
+      globals and any string naming a dunder), which costs a few false
+      rejections on unusual-but-harmless snippets.  Blocking a legitimate
+      snippet is a cheap failure; letting a hostile one through is not.
 
 Being explicit about this in the UI copy is intentional.
 """
@@ -30,6 +35,7 @@ Being explicit about this in the UI copy is intentional.
 import ast
 import os
 import platform
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -51,24 +57,58 @@ EXEC_TIMEOUT_SECS = 5        # wall-clock timeout for the probe subprocess
 # ---------------------------------------------------------------------------
 
 # Blocked top-level module names (import X or from X import ...)
+#
+# Grouped by what the module hands an attacker.  A blocklist is never complete
+# — the point is to raise the cost of the obvious escapes, nothing more.
 _BLOCKED_IMPORTS = frozenset({
-    "os", "subprocess", "sys", "socket", "shutil", "ctypes",
-    "requests", "urllib", "pathlib", "multiprocessing", "threading",
-    "importlib", "pty", "atexit", "signal", "mmap", "resource",
-    "gc", "sysconfig", "_thread",
+    # OS / process control
+    "os", "subprocess", "sys", "shutil", "pathlib", "signal", "mmap",
+    "resource", "multiprocessing", "threading", "_thread", "ctypes",
+    "pty", "atexit", "gc", "fcntl", "select", "selectors", "posix", "nt",
+    "_posixsubprocess", "pwd", "grp", "spwd", "termios", "tty", "getpass",
+    "codecs",
+
+    # Import / execution machinery
+    "importlib", "builtins", "__builtin__", "runpy", "code", "codeop",
+    "pdb", "bdb", "imp", "zipimport", "pkgutil", "site", "sitecustomize",
+    "usercustomize", "sysconfig", "traceback", "linecache", "inspect",
+    # Deserialisers that execute code on load
+    "pickle", "pickletools", "marshal", "shelve", "dbm", "anydbm",
+
+    # Network
+    "socket", "socketserver", "ssl", "asyncio", "asyncore", "http",
+    "ftplib", "smtplib", "telnetlib", "xmlrpc", "requests", "urllib",
+    "webbrowser",
+
+    # Filesystem
+    "glob", "tempfile", "fileinput", "zipfile", "tarfile", "gzip", "bz2",
+    "lzma", "sqlite3", "platform",
 })
 
-# Blocked builtin call names
+# Blocked builtin call names.
+#
+# getattr/setattr/delattr/globals/locals/vars are pure escape primitives: they
+# turn a *string* into an attribute lookup, which defeats the attribute check
+# below (e.g. getattr(x, "__subclasses__") or globals()["__builtins__"]).
+# Blocking them outright is deliberate — the false-reject cost is one clear
+# error message, whereas a false-accept is arbitrary code execution.
 _BLOCKED_CALLS = frozenset({
     "eval", "exec", "__import__", "open", "compile",
     "breakpoint", "input",
+    "getattr", "setattr", "delattr", "globals", "locals", "vars",
 })
 
-# Blocked attribute names that suggest dunder/sandbox-escape attempts
+# Blocked attribute names that suggest dunder/sandbox-escape attempts.
+# Also checked against string constants, so the equivalent subscript form
+# (obj["__class__"]) and string-argument form (getattr(x, "__class__")) are
+# caught by the same list.
 _BLOCKED_ATTRS = frozenset({
     "__class__", "__bases__", "__subclasses__", "__mro__",
     "__globals__", "__builtins__", "__code__", "__closure__",
     "__dict__", "__module__", "__spec__", "__loader__",
+    "__reduce__", "__reduce_ex__", "__getattribute__", "__self__",
+    "__func__", "__subclasshook__", "__init_subclass__",
+    "f_locals", "f_globals", "f_builtins", "gi_frame", "cr_frame",
 })
 
 
@@ -122,6 +162,29 @@ class _SafetyVisitor(ast.NodeVisitor):
             )
         self.generic_visit(node)
 
+    def visit_Constant(self, node: ast.Constant) -> None:
+        # String form of the same escapes: obj["__class__"] instead of
+        # obj.__class__, or the string argument to a getattr-style call.
+        # Only dunder/frame names are matched (not plain words like "eval"),
+        # so an innocent docstring is never tripped up.
+        if isinstance(node.value, str):
+            for blocked in _BLOCKED_ATTRS:
+                if blocked in node.value:
+                    raise SnippetValidationError(
+                        f"String literal referencing '{blocked}' is not allowed."
+                    )
+        self.generic_visit(node)
+
+    def visit_Name(self, node: ast.Name) -> None:
+        # Bare name form — __builtins__ is injected into every module's
+        # globals, so `__builtins__["eval"]` reaches exec() without an
+        # attribute access or a string literal to catch.
+        if node.id in _BLOCKED_ATTRS:
+            raise SnippetValidationError(
+                f"Reference to '{node.id}' is not allowed."
+            )
+        self.generic_visit(node)
+
 
 def _ast_check(code: str) -> None:
     """
@@ -132,8 +195,10 @@ def _ast_check(code: str) -> None:
     try:
         tree = ast.parse(code)
     except SyntaxError as exc:
+        # exc.lineno is None for some malformed inputs (e.g. null bytes)
+        where = f"line {exc.lineno}" if exc.lineno else "unknown line"
         raise SnippetValidationError(
-            f"Syntax error at line {exc.lineno}: {exc.msg}"
+            f"Syntax error at {where}: {exc.msg}"
         )
     _SafetyVisitor().visit(tree)
 
@@ -248,7 +313,6 @@ def validate_snippet(code: str) -> str:
             fh.write(code)
         _probe_execution(tmp_dir)
     finally:
-        import shutil
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
     return code
@@ -266,9 +330,14 @@ def save_snippet_to_tempdir(code: str) -> str:
     app_path = os.path.join(tmp_dir, "app.py")
     bak_path = app_path + ".bak"
 
-    with open(app_path, "w", encoding="utf-8") as fh:
-        fh.write(code)
-    with open(bak_path, "w", encoding="utf-8") as fh:
-        fh.write(code)
+    try:
+        with open(app_path, "w", encoding="utf-8") as fh:
+            fh.write(code)
+        with open(bak_path, "w", encoding="utf-8") as fh:
+            fh.write(code)
+    except OSError:
+        # Don't leak a half-written temp dir if the disk fills or perms fail
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        raise
 
     return tmp_dir
