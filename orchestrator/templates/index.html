@@ -1,0 +1,905 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sentinel Swarm</title>
+  <style>
+    /* ── Reset & base ────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #0d1117;
+      --surface:   #161b22;
+      --border:    #30363d;
+      --text:      #e6edf3;
+      --muted:     #8b949e;
+      --accent:    #388bfd;
+      --red:       #f85149;
+      --green:     #3fb950;
+      --yellow:    #d29922;
+      --panel-w:   260px;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+      font-size: 15px;
+      line-height: 1.6;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 40px 20px 60px;
+    }
+
+    /* ── Header ─────────────────────────────────────────────────────── */
+    header {
+      text-align: center;
+      margin-bottom: 40px;
+    }
+    header h1 {
+      font-size: 2rem;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+    }
+    header h1 span { color: var(--accent); }
+    header p {
+      color: var(--muted);
+      margin-top: 6px;
+      font-size: 0.95rem;
+    }
+
+    /* ── Big button ──────────────────────────────────────────────────── */
+    #release-btn {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 14px 40px;
+      font-size: 1.1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.2s, transform 0.1s;
+      letter-spacing: 0.2px;
+    }
+    #release-btn:hover:not(:disabled) { opacity: 0.88; transform: translateY(-1px); }
+    #release-btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+    /* ── Status bar ──────────────────────────────────────────────────── */
+    #status-bar {
+      margin-top: 18px;
+      min-height: 24px;
+      font-size: 0.9rem;
+      color: var(--muted);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .spinner {
+      display: none;
+      width: 16px; height: 16px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      flex-shrink: 0;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinner.active { display: block; }
+
+    /* ── Error banner ────────────────────────────────────────────────── */
+    #error-banner {
+      display: none;
+      margin-top: 16px;
+      background: #2d1319;
+      border: 1px solid var(--red);
+      border-radius: 8px;
+      padding: 12px 18px;
+      color: var(--red);
+      font-size: 0.88rem;
+      max-width: 860px;
+      width: 100%;
+      word-break: break-word;
+    }
+    #error-banner.visible { display: block; }
+
+    /* ── Four panels ─────────────────────────────────────────────────── */
+    #panels {
+      display: flex;
+      gap: 16px;
+      margin-top: 40px;
+      flex-wrap: wrap;
+      justify-content: center;
+      width: 100%;
+      max-width: 1140px;
+    }
+
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      width: var(--panel-w);
+      min-width: 220px;
+      flex: 1 1 var(--panel-w);
+      max-width: 300px;
+      padding: 20px;
+      opacity: 0.35;
+      transition: opacity 0.4s ease, border-color 0.4s ease;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .panel.active  { opacity: 1; border-color: var(--accent); }
+    .panel.done    { opacity: 1; border-color: var(--border); }
+
+    .panel-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .panel-icon {
+      width: 34px; height: 34px;
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.1rem;
+      background: var(--bg);
+      flex-shrink: 0;
+    }
+    .panel-title {
+      font-weight: 600;
+      font-size: 0.95rem;
+    }
+    .panel-role {
+      font-size: 0.78rem;
+      color: var(--muted);
+    }
+
+    /* status dot */
+    .status-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--border);
+      margin-left: auto;
+      flex-shrink: 0;
+      transition: background 0.3s;
+    }
+    .panel.active  .status-dot { background: var(--yellow); animation: pulse 1.2s ease infinite; }
+    .panel.done    .status-dot { background: var(--green); animation: none; }
+    .panel.done.error-state .status-dot { background: var(--red); }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; } 50% { opacity: 0.3; }
+    }
+
+    .panel-body {
+      font-size: 0.82rem;
+      color: var(--muted);
+      flex: 1;
+    }
+    .panel-body p { margin: 0; }
+
+    /* code block inside panels */
+    .code-block {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px;
+      font-family: "Cascadia Code", "Fira Code", "Consolas", monospace;
+      font-size: 0.72rem;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+      overflow-y: auto;
+      max-height: 220px;
+      margin-top: 8px;
+      color: var(--text);
+    }
+
+    /* badge */
+    .badge {
+      display: inline-block;
+      border-radius: 4px;
+      padding: 2px 8px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+    .badge-red   { background: #2d1319; color: var(--red);   border: 1px solid var(--red); }
+    .badge-green { background: #0d2116; color: var(--green); border: 1px solid var(--green); }
+
+    /* case-file card (Scribe panel) */
+    .case-file {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px;
+      margin-top: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .case-file-title {
+      font-weight: 700;
+      font-size: 0.9rem;
+      color: var(--text);
+    }
+    .case-file-explanation {
+      font-size: 0.8rem;
+      color: var(--muted);
+      line-height: 1.55;
+    }
+    .case-file-meta {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 4px;
+    }
+    .meta-chip {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 3px 8px;
+      font-size: 0.73rem;
+      color: var(--muted);
+    }
+    .meta-chip strong { color: var(--text); }
+
+    .severity-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 2px;
+    }
+    .severity-track {
+      flex: 1;
+      height: 6px;
+      background: var(--border);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    .severity-fill {
+      height: 100%;
+      border-radius: 3px;
+      background: var(--yellow);
+      transition: width 0.6s ease;
+    }
+    .severity-fill.high  { background: var(--red); }
+    .severity-fill.low   { background: var(--green); }
+    .severity-label { font-size: 0.75rem; color: var(--muted); white-space: nowrap; }
+
+    /* proof badge row */
+    .proof-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 6px;
+    }
+    .proof-badge {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      background: #0d2116;
+      border: 1px solid var(--green);
+      border-radius: 20px;
+      padding: 3px 10px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--green);
+    }
+    .proof-badge svg { width: 12px; height: 12px; }
+
+    /* ── Mode tabs ───────────────────────────────────────────────────── */
+    .mode-tabs {
+      display: flex;
+      gap: 0;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      margin-bottom: 18px;
+    }
+    .mode-tab {
+      flex: 1;
+      padding: 9px 20px;
+      background: transparent;
+      border: none;
+      color: var(--muted);
+      font-size: 0.88rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+    .mode-tab:not(:last-child) { border-right: 1px solid var(--border); }
+    .mode-tab.active {
+      background: var(--surface);
+      color: var(--text);
+      font-weight: 600;
+    }
+    .mode-tab:hover:not(.active) { background: rgba(255,255,255,0.04); }
+
+    /* ── Mode panels ─────────────────────────────────────────────────── */
+    .mode-panel { display: none; }
+    .mode-panel.active { display: block; }
+
+    /* ── Snippet textarea ────────────────────────────────────────────── */
+    .snippet-area {
+      width: 100%;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-family: "Cascadia Code", "Fira Code", "Consolas", monospace;
+      font-size: 0.82rem;
+      line-height: 1.55;
+      padding: 12px;
+      resize: vertical;
+      min-height: 180px;
+      margin-bottom: 10px;
+      tab-size: 4;
+    }
+    .snippet-area:focus { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .sandbox-note {
+      font-size: 0.78rem;
+      color: var(--muted);
+      background: #131c2e;
+      border: 1px solid #1f3460;
+      border-radius: 6px;
+      padding: 8px 12px;
+      margin-bottom: 14px;
+      line-height: 1.5;
+    }
+    .sandbox-note strong { color: #7daaff; }
+    #snippet-hunt-btn {
+      background: #1c3a5e;
+      color: #7daaff;
+      border: 1px solid #2d5a9e;
+      border-radius: 8px;
+      padding: 10px 28px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    #snippet-hunt-btn:hover:not(:disabled) { background: #243d62; }
+    #snippet-hunt-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .validation-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.76rem;
+      color: var(--muted);
+      margin-left: 14px;
+      vertical-align: middle;
+    }
+    .validation-badge.checking { color: var(--yellow); }
+    .validation-badge.ok       { color: var(--green); }
+    .validation-badge.fail     { color: var(--red); }
+
+    /* ── Scenario selector ───────────────────────────────────────────── */
+    .scenario-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    .scenario-row label {
+      font-size: 0.85rem;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+    #scenario-select {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-size: 0.9rem;
+      padding: 6px 12px;
+      cursor: pointer;
+      appearance: none;
+      -webkit-appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%238b949e' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 10px center;
+      padding-right: 30px;
+      min-width: 180px;
+    }
+    #scenario-select:focus { outline: 2px solid var(--accent); outline-offset: 2px; }
+    #scenario-desc {
+      font-size: 0.78rem;
+      color: var(--muted);
+      text-align: center;
+      min-height: 18px;
+      margin-top: -8px;
+      margin-bottom: 10px;
+    }
+
+    /* ── Run Again button ────────────────────────────────────────────── */
+    #run-again-btn {
+      display: none;
+      margin-top: 32px;
+      background: transparent;
+      color: var(--accent);
+      border: 1px solid var(--accent);
+      border-radius: 8px;
+      padding: 10px 28px;
+      font-size: 0.95rem;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    #run-again-btn:hover { background: rgba(56,139,253,0.1); }
+    #run-again-btn.visible { display: inline-block; }
+
+    /* ── Responsive ──────────────────────────────────────────────────── */
+    @media (max-width: 680px) {
+      #panels { flex-direction: column; align-items: center; }
+      .panel  { max-width: 100%; width: 100%; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ── Header ──────────────────────────────────────────────────────── -->
+  <header>
+    <h1>Sentinel <span>Swarm</span></h1>
+    <p>Four IBM Bob 2.0 subagents hunt a bug, prove it, fix it, and file the report — autonomously.</p>
+  </header>
+
+  <!-- ── Mode tabs ───────────────────────────────────────────────────── -->
+  <div class="mode-tabs" role="tablist">
+    <button class="mode-tab active" id="tab-scenarios" role="tab"
+            aria-selected="true" aria-controls="panel-mode-scenarios">
+      &#127919; Pre-built Scenarios
+    </button>
+    <button class="mode-tab" id="tab-snippet" role="tab"
+            aria-selected="false" aria-controls="panel-mode-snippet">
+      &#9998; Test Your Own Snippet
+    </button>
+  </div>
+
+  <!-- ── Mode: pre-built scenarios ──────────────────────────────────── -->
+  <div class="mode-panel active" id="panel-mode-scenarios" role="tabpanel">
+    <div class="scenario-row">
+      <label for="scenario-select">Target scenario:</label>
+      <select id="scenario-select">
+        {% for sid, smeta in scenarios.items() %}
+        <option value="{{ sid }}">{{ smeta.label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <p id="scenario-desc">{{ scenarios[scenarios.keys()|list|first].description }}</p>
+    <button id="release-btn">Release the Swarm</button>
+  </div>
+
+  <!-- ── Mode: user snippet ──────────────────────────────────────────── -->
+  <div class="mode-panel" id="panel-mode-snippet" role="tabpanel">
+    <div class="sandbox-note">
+      <strong>&#128737;&#65039; Safety filter applied.</strong>
+      Submitted code is checked against a static safety filter (blocking
+      dangerous imports and builtins) and run in an isolated, time-limited
+      subprocess before any AI analysis begins. Only snippets that pass both
+      checks proceed to the swarm.
+      <br><br>
+      <em>This is a lightweight safeguard suited for a demo, not a
+      production-grade sandbox — it does not provide OS-level isolation.</em>
+    </div>
+    <textarea class="snippet-area" id="snippet-code"
+              placeholder="Paste a small Python function or module here&hellip;
+e.g. a function with an edge-case bug you want the swarm to find.
+No Flask app wrapper needed — plain functions work fine."
+              spellcheck="false"></textarea>
+    <div>
+      <button id="snippet-hunt-btn">&#128270; Hunt in my code</button>
+      <span class="validation-badge" id="validation-badge"></span>
+    </div>
+  </div>
+
+  <div id="status-bar">
+    <div class="spinner" id="spinner"></div>
+    <span id="status-text"></span>
+  </div>
+
+  <div id="error-banner"></div>
+
+  <!-- ── Four panels ─────────────────────────────────────────────────── -->
+  <div id="panels">
+
+    <!-- Scout -->
+    <div class="panel" id="panel-scout">
+      <div class="panel-header">
+        <div class="panel-icon">&#128270;</div>
+        <div>
+          <div class="panel-title">Scout</div>
+          <div class="panel-role">Maps the codebase</div>
+        </div>
+        <div class="status-dot"></div>
+      </div>
+      <div class="panel-body" id="body-scout">
+        <p>Waiting to explore the repo&hellip;</p>
+      </div>
+    </div>
+
+    <!-- Saboteur -->
+    <div class="panel" id="panel-saboteur">
+      <div class="panel-header">
+        <div class="panel-icon">&#127919;</div>
+        <div>
+          <div class="panel-title">Saboteur</div>
+          <div class="panel-role">Writes &amp; runs the attack test</div>
+        </div>
+        <div class="status-dot"></div>
+      </div>
+      <div class="panel-body" id="body-saboteur">
+        <p>Waiting for Scout&hellip;</p>
+      </div>
+    </div>
+
+    <!-- Medic -->
+    <div class="panel" id="panel-medic">
+      <div class="panel-header">
+        <div class="panel-icon">&#10084;&#65039;</div>
+        <div>
+          <div class="panel-title">Medic</div>
+          <div class="panel-role">Patches &amp; confirms the fix</div>
+        </div>
+        <div class="status-dot"></div>
+      </div>
+      <div class="panel-body" id="body-medic">
+        <p>Waiting for a confirmed bug&hellip;</p>
+      </div>
+    </div>
+
+    <!-- Scribe -->
+    <div class="panel" id="panel-scribe">
+      <div class="panel-header">
+        <div class="panel-icon">&#128196;</div>
+        <div>
+          <div class="panel-title">Scribe</div>
+          <div class="panel-role">Files the case report</div>
+        </div>
+        <div class="status-dot"></div>
+      </div>
+      <div class="panel-body" id="body-scribe">
+        <p>Waiting for Medic&hellip;</p>
+      </div>
+    </div>
+
+  </div><!-- #panels -->
+
+  <button id="run-again-btn">&#8635; Run Again</button>
+
+  <!-- ── JavaScript ───────────────────────────────────────────────────── -->
+  <script>
+    // ── Helpers ──────────────────────────────────────────────────────────
+
+    const $ = id => document.getElementById(id);
+
+    function escHtml(str) {
+      return String(str ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    function setStatus(msg) { $('status-text').textContent = msg; }
+
+    function showError(msg) {
+      const b = $('error-banner');
+      b.textContent = msg;
+      b.classList.add('visible');
+    }
+    function clearError() {
+      const b = $('error-banner');
+      b.textContent = '';
+      b.classList.remove('visible');
+    }
+
+    // Transition a panel to active (in-progress) or done state
+    function panelActive(id) {
+      const el = $(id);
+      el.classList.remove('done');
+      el.classList.add('active');
+    }
+    function panelDone(id, errorState = false) {
+      const el = $(id);
+      el.classList.remove('active');
+      el.classList.add('done');
+      if (errorState) el.classList.add('error-state');
+    }
+
+    // ── Reset UI to idle state ─────────────────────────────────────────
+
+    function resetUI() {
+      ['panel-scout','panel-saboteur','panel-medic','panel-scribe'].forEach(id => {
+        const el = $(id);
+        el.classList.remove('active','done','error-state');
+      });
+      $('body-scout').innerHTML    = '<p>Waiting to explore the repo&hellip;</p>';
+      $('body-saboteur').innerHTML = '<p>Waiting for Scout&hellip;</p>';
+      $('body-medic').innerHTML    = '<p>Waiting for a confirmed bug&hellip;</p>';
+      $('body-scribe').innerHTML   = '<p>Waiting for Medic&hellip;</p>';
+      $('release-btn').disabled    = false;
+      $('spinner').classList.remove('active');
+      $('run-again-btn').classList.remove('visible');
+      setStatus('');
+      clearError();
+    }
+
+    // ── Render helpers ────────────────────────────────────────────────
+
+    function renderScout(trail) {
+      const summaryHtml = escHtml(trail.scout_summary);
+      $('body-scout').innerHTML = `
+        <p style="color:var(--text);font-weight:600;margin-bottom:6px;">Codebase mapped ✓</p>
+        <div class="code-block">${summaryHtml}</div>`;
+    }
+
+    function renderSaboteur(trail) {
+      $('body-saboteur').innerHTML = `
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+          <span class="badge badge-red">Bug Found</span>
+          <span style="font-size:0.75rem;color:var(--muted);">test FAILED ↓</span>
+        </div>
+        <div class="code-block">${escHtml(trail.test_code)}</div>
+        <div class="code-block" style="margin-top:6px;color:var(--red);">${escHtml(trail.initial_pytest_output)}</div>`;
+    }
+
+    function renderMedic(trail) {
+      $('body-medic').innerHTML = `
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+          <span class="badge badge-green">Fix Applied</span>
+          <span style="font-size:0.75rem;color:var(--muted);">test PASSED ↓</span>
+        </div>
+        <div class="code-block" style="color:var(--green);">${escHtml(trail.rerun_pytest_output)}</div>`;
+    }
+
+    function renderScribe(caseFile) {
+      const score     = Number(caseFile.severity_score) || 0;
+      const fillPct   = (score / 10) * 100;
+      const fillClass = score >= 7 ? 'high' : score <= 3 ? 'low' : '';
+
+      $('body-scribe').innerHTML = `
+        <div class="proof-row">
+          <div class="proof-badge">
+            <svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M13.5 4.5L6.5 11.5L2.5 7.5" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            Proven, not guessed
+          </div>
+        </div>
+        <div class="case-file">
+          <div class="case-file-title">${escHtml(caseFile.title)}</div>
+          <div class="case-file-explanation">${escHtml(caseFile.explanation)}</div>
+          <div class="severity-bar">
+            <div class="severity-track">
+              <div class="severity-fill ${fillClass}" style="width:${fillPct}%"></div>
+            </div>
+            <div class="severity-label">Fragility&nbsp;<strong>${score}/10</strong></div>
+          </div>
+          <div class="case-file-meta">
+            <div class="meta-chip">fn: <strong>${escHtml(caseFile.function_name)}</strong></div>
+          </div>
+        </div>`;
+    }
+
+    // ── Staggered reveal (simulates live sequencing post-fetch) ───────
+
+    function revealSequence(data) {
+      const trail    = data.trail;
+      const caseFile = data.case_file;
+      const DELAY    = 900; // ms between each panel reveal
+
+      // Scout reveal (immediate)
+      panelActive('panel-scout');
+      setTimeout(() => {
+        renderScout(trail);
+        panelDone('panel-scout');
+
+        // Saboteur reveal
+        panelActive('panel-saboteur');
+        setStatus('Saboteur found a bug…');
+        setTimeout(() => {
+          renderSaboteur(trail);
+          panelDone('panel-saboteur');
+
+          // Medic reveal
+          panelActive('panel-medic');
+          setStatus('Medic applying the fix…');
+          setTimeout(() => {
+            renderMedic(trail);
+            panelDone('panel-medic');
+
+            // Scribe reveal
+            panelActive('panel-scribe');
+            setStatus('Scribe filing the case…');
+            setTimeout(() => {
+              if (caseFile) {
+                renderScribe(caseFile);
+                panelDone('panel-scribe');
+                setStatus('Done. Bug found, fixed, and filed.');
+              } else {
+                $('body-scribe').innerHTML = '<p style="color:var(--red)">Scribe could not parse the report. Raw data in console.</p>';
+                console.warn('Scribe raw response:', data);
+                panelDone('panel-scribe', true);
+                setStatus('Done (Scribe error — see console).');
+              }
+              $('spinner').classList.remove('active');
+              $('run-again-btn').classList.add('visible');
+            }, DELAY);
+          }, DELAY);
+        }, DELAY);
+      }, DELAY);
+    }
+
+    // ── Tab switching ─────────────────────────────────────────────────
+
+    function switchTab(activeTabId) {
+      ['tab-scenarios', 'tab-snippet'].forEach(id => {
+        const tab   = $(id);
+        const panel = $(id.replace('tab-', 'panel-mode-'));
+        const isActive = id === activeTabId;
+        tab.classList.toggle('active', isActive);
+        tab.setAttribute('aria-selected', String(isActive));
+        panel.classList.toggle('active', isActive);
+      });
+      clearError();
+      resetUI();
+    }
+
+    $('tab-scenarios').addEventListener('click', () => switchTab('tab-scenarios'));
+    $('tab-snippet').addEventListener('click',   () => switchTab('tab-snippet'));
+
+    // ── Scenario selector wiring ──────────────────────────────────────
+
+    const SCENARIO_DESCS = {
+      {% for sid, smeta in scenarios.items() %}
+      "{{ sid }}": "{{ smeta.description }}",
+      {% endfor %}
+    };
+
+    $('scenario-select').addEventListener('change', () => {
+      const sid = $('scenario-select').value;
+      $('scenario-desc').textContent = SCENARIO_DESCS[sid] || '';
+    });
+
+    // ── Shared post-fetch handler (same for both modes) ───────────────
+
+    function handleSwarmResponse(data, onReset) {
+      if (!data.ok_status) {
+        throw new Error(data.detail || data.pytest_output || 'Unexpected error');
+      }
+      if (data.verdict === 'no_bug_found') {
+        renderScout(data.trail ?? { scout_summary: data.scout_summary ?? '' });
+        panelDone('panel-scout');
+        $('spinner').classList.remove('active');
+        setStatus('No bug found this run. Try again!');
+        $('run-again-btn').classList.add('visible');
+        return;
+      }
+      revealSequence(data);
+    }
+
+    function finishWithError(err, onReset) {
+      $('spinner').classList.remove('active');
+      if (onReset) onReset();
+      ['panel-scout','panel-saboteur','panel-medic','panel-scribe'].forEach(id => {
+        $(id).classList.remove('active');
+      });
+      setStatus('');
+      showError('Error: ' + err.message);
+    }
+
+    // ── Scenario mode — "Release the Swarm" ───────────────────────────
+
+    $('release-btn').addEventListener('click', async () => {
+      const scenario = $('scenario-select').value;
+      clearError();
+      $('release-btn').disabled    = true;
+      $('scenario-select').disabled = true;
+      $('spinner').classList.add('active');
+      $('run-again-btn').classList.remove('visible');
+      panelActive('panel-scout');
+      setStatus('Scout is mapping the codebase…');
+
+      try {
+        const res  = await fetch(`/run-swarm?scenario=${encodeURIComponent(scenario)}`);
+        const data = await res.json();
+        data.ok_status = res.ok && data.status !== 'error';
+        handleSwarmResponse(data, null);
+      } catch (err) {
+        finishWithError(err, () => {
+          $('release-btn').disabled    = false;
+          $('scenario-select').disabled = false;
+        });
+      }
+    });
+
+    // ── Snippet mode — "Hunt in my code" ──────────────────────────────
+
+    function setValidationBadge(state, text) {
+      const el = $('validation-badge');
+      el.className = 'validation-badge' + (state ? ' ' + state : '');
+      el.textContent = text;
+    }
+
+    $('snippet-hunt-btn').addEventListener('click', async () => {
+      const code = $('snippet-code').value.trim();
+      if (!code) {
+        showError('Please paste some Python code before hunting.');
+        return;
+      }
+
+      clearError();
+      $('snippet-hunt-btn').disabled = true;
+      $('snippet-code').readOnly     = true;
+      $('spinner').classList.add('active');
+      $('run-again-btn').classList.remove('visible');
+      setValidationBadge('checking', '⏳ Checking snippet…');
+      setStatus('Running safety filter and probe execution…');
+
+      try {
+        const res  = await fetch('/run-snippet', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ code }),
+        });
+        const data = await res.json();
+
+        if (data.stage === 'validation') {
+          // Validation failed — show error, do NOT start panel animation
+          setValidationBadge('fail', '✗ Invalid');
+          $('spinner').classList.remove('active');
+          $('snippet-hunt-btn').disabled = false;
+          $('snippet-code').readOnly     = false;
+          setStatus('');
+          showError('Validation failed: ' + data.detail);
+          return;
+        }
+
+        setValidationBadge('ok', '✓ Valid Python');
+        // Now light up Scout and hand off to shared handler
+        panelActive('panel-scout');
+        setStatus('Scout is mapping your code…');
+        data.ok_status = res.ok && data.status !== 'error';
+        handleSwarmResponse(data, null);
+
+      } catch (err) {
+        setValidationBadge('fail', '✗ Error');
+        finishWithError(err, () => {
+          $('snippet-hunt-btn').disabled = false;
+          $('snippet-code').readOnly     = false;
+        });
+      }
+    });
+
+    // ── Run Again ─────────────────────────────────────────────────────
+
+    $('run-again-btn').addEventListener('click', async () => {
+      const isSnippetMode = $('tab-snippet').classList.contains('active');
+      $('run-again-btn').classList.remove('visible');
+      $('spinner').classList.add('active');
+      setStatus('Resetting…');
+
+      if (!isSnippetMode) {
+        const scenario = $('scenario-select').value;
+        try {
+          await fetch(`/reset-demo?scenario=${encodeURIComponent(scenario)}`, { method: 'POST' });
+        } catch (_) { /* best-effort */ }
+        $('scenario-select').disabled = false;
+      } else {
+        // Snippet mode: just re-enable the form — no server reset needed
+        // (save_snippet_to_tempdir always creates a fresh dir)
+        $('snippet-hunt-btn').disabled = false;
+        $('snippet-code').readOnly     = false;
+        setValidationBadge('', '');
+      }
+
+      resetUI();
+    });
+  </script>
+</body>
+</html>

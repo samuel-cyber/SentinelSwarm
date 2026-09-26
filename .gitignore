@@ -1,0 +1,25 @@
+# secrets & local config
+.env
+orchestrator/.env
+
+# answer key -- never push publicly
+PLANTED_BUGS.md
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+
+# pytest
+.pytest_cache/
+htmlcov/
+.coverage
+
+# macOS
+.DS_Store
