@@ -4,7 +4,7 @@
 
 Built for the **IBM Bob 2.0 Hackathon** (lablab.ai, September 2026).
 
-> **Live demo:** `<your-render-url-here>` · **Demo video:** `<link>` · **Stack:** Python 3.12 · Flask · pytest · Docker · IBM Bob 2.0
+> **Live demo:** `<https://sentinelswarm.onrender.com/>` · **Demo video:** `<link>` · **Stack:** Python 3.12 · Flask · pytest · Docker · IBM Bob 2.0
 
 ---
 
@@ -274,6 +274,6 @@ We'd rather tell you than have you find them.
 
 ## 14. Team
 
-`<names>` · built in 48 hours for the IBM Bob 2.0 Hackathon.
+`<Ojo Samuel Oluwasemilore>` · built in 48 hours for the IBM Bob 2.0 Hackathon.
 
 *"We don't suggest bugs. We prove them."*
